@@ -15,7 +15,12 @@ import { createQuestionForMode, QUIZ_MODES } from './quiz/modes.js';
 import { QUESTION_GENERATORS } from './quiz/generators.js';
 import { scoreQuestion } from './quiz/scoring.js';
 import { renderAnswerDisplay } from './quiz/displays.js';
-import { runEngineSelfTests } from './engine/effectiveness.js';
+import {
+  runEngineSelfTests,
+  getOffensiveMatchups,
+  getDefensiveMatchups,
+  MULTIPLIER_ORDER
+} from './engine/effectiveness.js';
 
 function el(tag, options = {}) {
   const node = document.createElement(tag);
@@ -24,14 +29,12 @@ function el(tag, options = {}) {
   return node;
 }
 
-function formatPercent(score) {
-  return `${Math.round(score * 100)}%`;
-}
-
-function formatTypes(types) {
-  return types.length
-    ? types.map(type => TYPE_META[type].label).join(', ')
-    : 'None';
+function formatPercent(score) { return `${Math.round(score * 100)}%`; }
+function formatTypes(types) { return types.length ? types.map(type => TYPE_META[type].label).join(', ') : 'None'; }
+function formatMultiplier(value) {
+  if (Number(value) === 0.5) return '½×';
+  if (Number(value) === 0.25) return '¼×';
+  return `${value}×`;
 }
 
 function createNextQuestion() {
@@ -49,11 +52,8 @@ function beginSession(length, render) {
 }
 
 function toggleAnswer(answer, render) {
-  if (state.quiz.selectedAnswers.has(answer)) {
-    state.quiz.selectedAnswers.delete(answer);
-  } else {
-    state.quiz.selectedAnswers.add(answer);
-  }
+  if (state.quiz.selectedAnswers.has(answer)) state.quiz.selectedAnswers.delete(answer);
+  else state.quiz.selectedAnswers.add(answer);
   render();
 }
 
@@ -69,10 +69,7 @@ function renderFeedback(result, question) {
 
 function renderQuizSetup(page, render) {
   const panel = el('div', { className: 'panel' });
-  panel.append(el('p', {
-    text: 'This quiz currently uses one offensive weakness generator. Each quiz type keeps its own saved setup.'
-  }));
-
+  panel.append(el('p', { text: 'This quiz currently uses one offensive weakness generator. Each quiz type keeps its own saved setup.' }));
   const form = el('div', { className: 'quiz-setup' });
 
   const modeLabel = el('label');
@@ -106,7 +103,6 @@ function renderQuizSetup(page, render) {
   }
 
   populateLengthOptions();
-
   modeSelect.addEventListener('change', () => {
     state.quiz.mode = modeSelect.value;
     state.settings.quiz.defaultMode = modeSelect.value;
@@ -114,19 +110,16 @@ function renderQuizSetup(page, render) {
     populateLengthOptions();
     saveSettings(state.settings);
   });
-
   lengthSelect.addEventListener('change', () => {
     getQuizModeSettings(state.quiz.mode).questionCount = Number(lengthSelect.value);
     saveSettings(state.settings);
   });
-
   lengthLabel.append(lengthSelect);
   form.append(lengthLabel);
 
   const start = el('button', { text: 'Start quiz' });
   start.addEventListener('click', () => beginSession(Number(lengthSelect.value), render));
   form.append(start);
-
   panel.append(form);
   page.append(panel);
 }
@@ -134,30 +127,22 @@ function renderQuizSetup(page, render) {
 function renderSessionHeader(page) {
   const session = state.quiz.session;
   const header = el('div', { className: 'session-header' });
-  const countText = session.length === 0
-    ? `Question ${session.questionNumber}`
-    : `Question ${session.questionNumber} of ${session.length}`;
-  header.append(el('span', { text: countText }));
-  header.append(el('span', {
-    text: `Session average: ${formatPercent(getSessionAverageScore())}`
-  }));
+  header.append(el('span', { text: session.length === 0 ? `Question ${session.questionNumber}` : `Question ${session.questionNumber} of ${session.length}` }));
+  header.append(el('span', { text: `Session average: ${formatPercent(getSessionAverageScore())}` }));
   page.append(header);
 }
 
 function renderActiveQuestion(page, render) {
   renderSessionHeader(page);
-
   const question = state.quiz.question;
   const panel = el('div', { className: 'panel' });
   panel.append(el('h3', { text: question.prompt }));
-
   panel.append(renderAnswerDisplay(question.answerType, {
     question,
     selectedAnswers: state.quiz.selectedAnswers,
     result: state.quiz.result,
     onToggle: answer => toggleAnswer(answer, render)
   }));
-
   if (state.quiz.result) panel.append(renderFeedback(state.quiz.result, question));
 
   const actions = el('div', { className: 'actions' });
@@ -174,50 +159,34 @@ function renderActiveQuestion(page, render) {
     });
     actions.append(submit);
   } else {
-    const isLastQuestion = state.quiz.session.length !== 0
-      && state.quiz.session.questionNumber >= state.quiz.session.length;
-    const next = el('button', { text: isLastQuestion ? 'See summary' : 'Next question' });
+    const isLast = state.quiz.session.length !== 0 && state.quiz.session.questionNumber >= state.quiz.session.length;
+    const next = el('button', { text: isLast ? 'See summary' : 'Next question' });
     next.addEventListener('click', () => {
       if (advanceQuizSession()) createNextQuestion();
       render();
     });
     actions.append(next);
   }
-
   if (state.quiz.session.length === 0) {
-    const end = el('button', { text: 'End session' });
-    end.className = 'secondary-button';
-    end.addEventListener('click', () => {
-      endQuizSession();
-      render();
-    });
+    const end = el('button', { className: 'secondary-button', text: 'End session' });
+    end.addEventListener('click', () => { endQuizSession(); render(); });
     actions.append(end);
   }
-
   panel.append(actions);
   page.append(panel);
 }
 
 function renderSessionSummary(page, render) {
   const panel = el('div', { className: 'panel summary-panel' });
-  const count = state.quiz.session.results.length;
   panel.append(el('h3', { text: 'Session complete' }));
-  panel.append(el('p', { text: `Questions answered: ${count}` }));
-  panel.append(el('p', {
-    className: 'summary-score',
-    text: `Average score: ${formatPercent(getSessionAverageScore())}`
-  }));
-
+  panel.append(el('p', { text: `Questions answered: ${state.quiz.session.results.length}` }));
+  panel.append(el('p', { className: 'summary-score', text: `Average score: ${formatPercent(getSessionAverageScore())}` }));
   const actions = el('div', { className: 'actions' });
-  const sameAgain = el('button', { text: 'Quiz again' });
-  sameAgain.addEventListener('click', () => beginSession(state.quiz.session.length, render));
-  const setup = el('button', { text: 'Change setup' });
-  setup.className = 'secondary-button';
-  setup.addEventListener('click', () => {
-    returnToQuizSetup();
-    render();
-  });
-  actions.append(sameAgain, setup);
+  const again = el('button', { text: 'Quiz again' });
+  again.addEventListener('click', () => beginSession(state.quiz.session.length, render));
+  const setup = el('button', { className: 'secondary-button', text: 'Change setup' });
+  setup.addEventListener('click', () => { returnToQuizSetup(); render(); });
+  actions.append(again, setup);
   panel.append(actions);
   page.append(panel);
 }
@@ -225,11 +194,109 @@ function renderSessionSummary(page, render) {
 function renderQuiz(container, render) {
   const page = el('section', { className: 'page' });
   page.append(el('h2', { text: 'Quiz' }));
-
   if (state.quiz.status === 'idle') renderQuizSetup(page, render);
   else if (state.quiz.status === 'complete') renderSessionSummary(page, render);
   else renderActiveQuestion(page, render);
+  container.replaceChildren(page);
+}
 
+function createTypeSelect(value, includeNone = false) {
+  const select = el('select');
+  if (includeNone) {
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'None';
+    select.append(none);
+  }
+  for (const type of TYPES) {
+    const option = document.createElement('option');
+    option.value = type;
+    option.textContent = TYPE_META[type].label;
+    option.selected = value === type;
+    select.append(option);
+  }
+  return select;
+}
+
+function createTypeChip(type) {
+  return el('span', { className: 'type-chip', text: TYPE_META[type].label });
+}
+
+function renderMatchupGroups(groups, order) {
+  const list = el('div', { className: 'matchup-groups' });
+  for (const multiplier of order) {
+    const types = groups[multiplier] ?? [];
+    if (!types.length) continue;
+    const group = el('section', { className: 'matchup-group' });
+    group.append(el('h3', { text: formatMultiplier(multiplier) }));
+    const chips = el('div', { className: 'type-chip-list' });
+    for (const type of types) chips.append(createTypeChip(type));
+    group.append(chips);
+    list.append(group);
+  }
+  return list;
+}
+
+function renderStudy(container, render) {
+  const page = el('section', { className: 'page' });
+  page.append(el('h2', { text: 'Study' }));
+
+  const controls = el('div', { className: 'panel study-controls' });
+  const modeLabel = el('label');
+  modeLabel.append(el('span', { text: 'Lookup direction' }));
+  const modeSelect = el('select');
+  for (const [value, label] of [['offense', 'Attacking with a type'], ['defense', 'Defending as a type']]) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    option.selected = state.study.mode === value;
+    modeSelect.append(option);
+  }
+  modeSelect.addEventListener('change', () => {
+    state.study.mode = modeSelect.value;
+    if (state.study.mode === 'offense') state.study.secondaryType = null;
+    render();
+  });
+  modeLabel.append(modeSelect);
+  controls.append(modeLabel);
+
+  const primaryLabel = el('label');
+  primaryLabel.append(el('span', { text: state.study.mode === 'offense' ? 'Attacking type' : 'Primary defending type' }));
+  const primary = createTypeSelect(state.study.primaryType);
+  primary.addEventListener('change', () => {
+    state.study.primaryType = primary.value;
+    if (state.study.secondaryType === primary.value) state.study.secondaryType = null;
+    render();
+  });
+  primaryLabel.append(primary);
+  controls.append(primaryLabel);
+
+  if (state.study.mode === 'defense') {
+    const secondaryLabel = el('label');
+    secondaryLabel.append(el('span', { text: 'Secondary defending type' }));
+    const secondary = createTypeSelect(state.study.secondaryType, true);
+    secondary.addEventListener('change', () => {
+      state.study.secondaryType = secondary.value || null;
+      if (state.study.secondaryType === state.study.primaryType) state.study.secondaryType = null;
+      render();
+    });
+    secondaryLabel.append(secondary);
+    controls.append(secondaryLabel);
+  }
+  page.append(controls);
+
+  const result = el('div', { className: 'panel study-results' });
+  const defendingTypes = [state.study.primaryType, state.study.secondaryType].filter(Boolean);
+  if (state.study.mode === 'offense') {
+    result.append(el('h3', { text: `${TYPE_META[state.study.primaryType].label} attacks` }));
+    result.append(el('p', { className: 'muted', text: 'Damage dealt to each single defending type.' }));
+    result.append(renderMatchupGroups(getOffensiveMatchups(state.study.primaryType), [2, 1, 0.5, 0]));
+  } else {
+    result.append(el('h3', { text: `Defending as ${defendingTypes.map(type => TYPE_META[type].label).join(' / ')}` }));
+    result.append(el('p', { className: 'muted', text: 'Incoming damage from each attacking type. Dual-type multipliers are multiplied together.' }));
+    result.append(renderMatchupGroups(getDefensiveMatchups(defendingTypes), MULTIPLIER_ORDER));
+  }
+  page.append(result);
   container.replaceChildren(page);
 }
 
@@ -245,11 +312,8 @@ function renderPlaceholder(container, title, message) {
 function renderSettings(container) {
   const page = el('section', { className: 'page' });
   page.append(el('h2', { text: 'Settings' }));
-
   const panel = el('div', { className: 'panel' });
-  panel.append(el('p', {
-    text: `Saved preferences are active. Theme preference: ${state.settings.theme}. Default quiz type: ${state.settings.quiz.defaultMode}.`
-  }));
+  panel.append(el('p', { text: `Saved preferences are active. Theme preference: ${state.settings.theme}. Default quiz type: ${state.settings.quiz.defaultMode}.` }));
   const link = el('a', { className: 'button-link', text: 'Developer diagnostics' });
   link.href = '#debug';
   panel.append(link);
@@ -270,9 +334,7 @@ function localStorageAvailable() {
     localStorage.setItem(key, '1');
     localStorage.removeItem(key);
     return true;
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 function renderDebug(container) {
@@ -281,7 +343,6 @@ function renderDebug(container) {
   const back = el('a', { className: 'back-link', text: '← Back to settings' });
   back.href = '#settings';
   page.append(back);
-
   const tests = runEngineSelfTests();
   const passed = tests.filter(test => test.passed).length;
   const saved = loadPersistentData();
@@ -301,10 +362,10 @@ function renderDebug(container) {
   storage.append(el('h3', { text: 'Storage' }));
   storage.append(diagnosticRow('localStorage available', storageWorks ? 'Yes' : 'No', storageWorks ? 'ok' : 'bad'));
   storage.append(diagnosticRow('Schema version', STORAGE_VERSION, 'ok'));
-  storage.append(diagnosticRow('Saved questions', saved.progress.totalAnswered, 'neutral'));
-  storage.append(diagnosticRow('Saved average', formatPercent(saved.progress.totalAnswered ? saved.progress.totalScore / saved.progress.totalAnswered : 0), 'neutral'));
-  storage.append(diagnosticRow('Relationship records', Object.keys(saved.progress.relationshipStats ?? {}).length, 'neutral'));
-  storage.append(diagnosticRow('Cached Pokémon', Object.keys(saved.cache.pokemon ?? {}).length, 'neutral'));
+  storage.append(diagnosticRow('Saved questions', saved.progress.totalAnswered));
+  storage.append(diagnosticRow('Saved average', formatPercent(saved.progress.totalAnswered ? saved.progress.totalScore / saved.progress.totalAnswered : 0)));
+  storage.append(diagnosticRow('Relationship records', Object.keys(saved.progress.relationshipStats ?? {}).length));
+  storage.append(diagnosticRow('Cached Pokémon', Object.keys(saved.cache.pokemon ?? {}).length));
   page.append(storage);
 
   const runtime = el('div', { className: 'panel diagnostic-panel' });
@@ -315,26 +376,21 @@ function renderDebug(container) {
   runtime.append(diagnosticRow('Active session mode', state.quiz.session.mode));
   runtime.append(diagnosticRow('Active session length', state.quiz.session.length === 0 ? 'Endless' : state.quiz.session.length));
   runtime.append(diagnosticRow('Current selections', state.quiz.selectedAnswers.size));
+  runtime.append(diagnosticRow('Study mode', state.study.mode));
+  runtime.append(diagnosticRow('Study types', [state.study.primaryType, state.study.secondaryType].filter(Boolean).join('/')));
   page.append(runtime);
 
   const testPanel = el('div', { className: 'panel diagnostic-panel' });
   testPanel.append(el('h3', { text: 'Engine test details' }));
-  for (const test of tests) {
-    testPanel.append(diagnosticRow(test.name ?? 'Unnamed test', test.passed ? 'Pass' : 'Fail', test.passed ? 'ok' : 'bad'));
-  }
+  for (const test of tests) testPanel.append(diagnosticRow(test.name ?? 'Unnamed test', test.passed ? 'Pass' : 'Fail', test.passed ? 'ok' : 'bad'));
   page.append(testPanel);
-
   container.replaceChildren(page);
 }
 
 export const VIEWS = {
   quiz: renderQuiz,
-  study: container => renderPlaceholder(container, 'Study', 'Type and Pokémon lookup will live here.'),
-  progress: container => renderPlaceholder(
-    container,
-    'Progress',
-    `Saved questions answered: ${state.progress.totalAnswered}. Average score: ${formatPercent(getAverageScore())}.`
-  ),
+  study: renderStudy,
+  progress: container => renderPlaceholder(container, 'Progress', `Saved questions answered: ${state.progress.totalAnswered}. Average score: ${formatPercent(getAverageScore())}.`),
   settings: renderSettings,
   debug: renderDebug
 };
