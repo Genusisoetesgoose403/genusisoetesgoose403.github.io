@@ -26,7 +26,11 @@ export const state = {
       }
     }
   },
-  study: { selectedType: null },
+  study: {
+    mode: 'offense',
+    primaryType: 'fire',
+    secondaryType: null
+  },
   progress: {
     totalAnswered: 0,
     totalScore: 0,
